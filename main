@@ -1,0 +1,174 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import selenium
+import os
+import io
+from selenium import webdriver
+import time
+from io import StringIO
+
+
+def create_players_stats_html(years_range, url_players, folder):
+    driver = webdriver.Chrome()
+
+    for year in years_range:
+        url = url_players.format(year)
+        driver.get(url)
+        driver.execute_script("window.scrollTo(1, 1000)")
+        time.sleep(2)
+
+        html = driver.page_source
+
+        with open(f"{folder}/{year}.html", "w+", encoding="utf-8") as f:
+            f.write(html)
+
+
+def players_concat(years):
+    dfs = []
+    for year in years:
+        with open("player/{}.html".format(year), encoding="utf-8") as f:
+            page = f.read()
+
+        soup = BeautifulSoup(page, "html.parser")
+        soup.find('tr', class_="thead").decompose()
+        player_table = soup.find(id="per_game_stats")
+
+        # Use io.StringIO to create a temporary in-memory file-like object
+        player_html_string = str(player_table)
+        player_io = StringIO(player_html_string)
+
+        # Read HTML from the StringIO object
+        player = pd.read_html(player_io)[0]
+        player["Year"] = year
+        dfs.append(player)
+
+    players = pd.concat(dfs)
+    return players
+
+
+def team_standing(years, url_standing):
+    for year in years:
+        url = url_standing.format(year)
+        data = requests.get(url)
+
+        with open("team/{}.html".format(year), "w+", encoding="utf-8") as f:
+            f.write(data.text)
+
+
+def team_standing_table_creation(years):
+    dfs = []
+    for year in years:
+        with open("team/{}.html".format(year), encoding="utf-8") as f:
+            page = f.read()
+
+        soup = BeautifulSoup(page, "html.parser")
+        soup.find('tr', class_="thead").decompose()
+        team_table = soup.find(id="divs_standings_E")
+
+        # Use io.StringIO to create a temporary in-memory file-like object
+        team_html_string = str(team_table)
+        team_io = StringIO(team_html_string)
+
+        team = pd.read_html(team_io)[0]
+        team["Year"] = year
+        team["Team"] = team["Eastern Conference"]
+        dfs.append(team)
+
+        ## Parse the second table
+
+        soup = BeautifulSoup(page, "html.parser")
+        soup.find('tr', class_="thead").decompose()
+        team_table = soup.find(id="divs_standings_W")
+
+        # Use io.StringIO to create a temporary in-memory file-like object
+        team_html_string = str(team_table)
+        team_io = StringIO(team_html_string)
+
+        team = pd.read_html(team_io)[0]
+        team["Year"] = year
+        team["Team"] = team["Western Conference"]
+        dfs.append(team)
+
+    teams = pd.concat(dfs)
+
+    return teams
+
+
+url_basket = 'https://www.basketball-reference.com/awards/'
+url_stats = 'https://www.basketball-reference.com/'
+url_test = 'https://www.basketball-reference.com/awards/awards_{}.html'
+url_player_stats = 'https://www.basketball-reference.com/leagues/NBA_{}_per_game.html'
+url_standing = 'https://www.basketball-reference.com/leagues/NBA_{}_standings.html'
+
+years = range(1991, 2021)
+
+
+# Get the data for each year from 1991
+for year in years:
+    url = url_test.format(year)
+    data = requests.get(url)
+
+    # Save the HTML Content to the specified file path
+    with open("mvp/{}.html".format(year), "wb+") as f:
+        f.write(data.content)
+
+
+seasonal_dataframe = []
+
+for year in years:
+    print(year)
+    with open("mvp/{}.html".format(year), encoding="utf-8") as f:
+        page = f.read()
+
+        soup = BeautifulSoup(page, "html.parser")
+
+        # Find the element with class "over_header"
+        over_header_element = soup.find('tr', class_="over_header")
+
+        # Check if the element is found before attempting to decompose it
+        if over_header_element:
+            over_header_element.decompose()
+            print(f"Element found and decompose for year {year}")
+
+        # soup.find('tr', class_="over_header").decompose()
+        mvp_table = soup.find(id="mvp")
+
+        # Use io.StringIO to create a temporary in-memory file-like object, in order to prevent a future deprecate
+        mvp_html_string = str(mvp_table)
+        mvp_io = io.StringIO(mvp_html_string)
+
+        # Read HTML from the StringIO object
+        mvp = pd.read_html(mvp_io)[0]
+        mvp["Year"] = year
+
+        seasonal_dataframe.append(mvp)
+
+## Use the concat to combine all the mvp tables from all years
+mvps = pd.concat(seasonal_dataframe)
+
+## Save it to CSV format
+mvps.to_csv("mvps.csv")
+
+## We need to find the stats of the players in order to guess the MVP
+
+
+folder_players = "Player"
+## Calling the function to find all the players stats from 1991-2020 and save it as html
+
+create_players_stats_html(years, url_player_stats, folder_players)
+
+### Calling the players-concat to combine all the tables from players
+players = players_concat(years)
+
+### Save it to csv so we can use it later
+players.to_csv("players.csv")
+print(players.head())
+
+
+## Calling the team_standing function to find all the standing tables for NBA
+team_standing(years, url_standing)
+
+team = team_standing_table_creation(years)
+
+team.to_csv("team.csv")
